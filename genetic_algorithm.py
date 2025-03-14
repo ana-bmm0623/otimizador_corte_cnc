@@ -265,7 +265,7 @@ class GeneticAlgorithm(LayoutDisplayMixin):
         Exibe o layout inicial (posições originais) e o layout final
         usando free rectangles (sem redimensionar ou multi-chapas).
         """
-        self.display_layout(self.recortes_disponiveis, title="Initial Layout - GA (FreeRect)")
+        self.display_layout(self.recortes_disponiveis, title="Initial Layout - GA")
         self.run()
-        self.display_layout(self.optimized_layout, title="Optimized Layout - GA (FreeRect)")
+        self.display_layout(self.optimized_layout, title="Optimized Layout - GA")
         return self.optimized_layout
