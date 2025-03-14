@@ -1,15 +1,13 @@
 """
 genetic_algorithm.py
 
-Genetic Algorithm with Best-Fit Shelf Packing and Uniform Scaling
-
-Features:
-  - Ignores the user‑provided (x,y) positions and recalculates a layout via shelf packing.
-  - Each individual is a permutation of the indices of the available pieces.
-  - The shelf-packing decoder places pieces sequentially in shelves (no overlap, no pieces cut off).
-  - If the overall layout (bounding box) exceeds the available sheet dimensions, the layout is uniformly scaled to fit.
-  - For rectangular and diamond pieces, both 0° and 90° rotations are tested.
-  - Fitness is computed as the area of the bounding box of the decoded layout (lower is better).
+Algoritmo Genético com Shelf Packing Multi‑Chapa (Bin Packing)
+- Ignora as posições (x, y) originais; o layout é recalculado.
+- Cada indivíduo é uma permutação dos índices das peças.
+- A decodificação utiliza Shelf Packing, retornando também as peças que não couberam na chapa atual.
+- Se houver peças não alocadas, uma segunda (ou mais) chapa é gerada (o layout final é a combinação vertical dos layouts de cada chapa).
+- Para peças do tipo "retangular" e "diamante", testa rotações 0° e 90° e escolhe a configuração que melhor se encaixa.
+- O fitness é calculado penalizando fortemente cada peça não colocada.
 """
 
 from common.layout_display import LayoutDisplayMixin
@@ -21,44 +19,38 @@ from typing import List, Dict, Any, Tuple
 class GeneticAlgorithm(LayoutDisplayMixin):
     def __init__(self, TAM_POP, recortes_disponiveis, sheet_width, sheet_height, numero_geracoes=100):
         """
-        GA (Best-Fit Shelf Packing + Uniform Scaling) for Cutting Sheet Optimization.
+        GA Multi‑Chapa para Otimização de Corte (bin packing sem redimensionamento).
 
-        Parameters:
-          - TAM_POP: Population size (e.g., 50, 100).
-          - recortes_disponiveis: JSON-like list of pieces (types: retangular, diamante, circular, etc.).
-          - sheet_width, sheet_height: Dimensions of the sheet.
-          - numero_geracoes: Number of generations.
-        
-        This GA ignores user-provided positions and generates a layout that includes all pieces.
-        After shelf packing, the entire layout is uniformly scaled to exactly fit the sheet,
-        ensuring no overlap and no pieces are cut off.
+        Parâmetros:
+          - TAM_POP: Tamanho da população (ex.: 50, 100).
+          - recortes_disponiveis: Lista de peças (JSON-like, com tipos: retangular, diamante, circular, etc.).
+          - sheet_width, sheet_height: Dimensões da chapa.
+          - numero_geracoes: Número de gerações.
         """
-        print("GA (Best-Fit Shelf Packing + Scaling) - All pieces placed, no overlap or cuts.")
+        print("GA Multi‑Chapa (Bin Packing) - Otimizando disposição sem sobreposições e sem cortes.")
         self.TAM_POP = TAM_POP
         self.recortes_disponiveis = recortes_disponiveis
         self.sheet_width = sheet_width
         self.sheet_height = sheet_height
         self.numero_geracoes = numero_geracoes
 
-        # Population: each individual is a permutation of indices [0, 1, ..., n-1]
+        # Cada indivíduo é uma permutação dos índices [0 ... n-1]
         self.POP: List[List[int]] = []
         self.best_individual: List[int] = []
-        self.best_layout: List[Dict[str, Any]] = []
         self.best_fitness: float = float('inf')
         self.optimized_layout = None
 
-        # GA parameters
+        # Parâmetros do GA
         self.mutation_rate = 0.1
         self.elitism = True
 
-        # Initialize population (random permutations)
         self.initialize_population()
 
     # -------------------------------------------------------------------------
-    # 1. Initialize Population
+    # 1. Inicialização da População (Permutações)
     # -------------------------------------------------------------------------
     def initialize_population(self):
-        """Creates TAM_POP random permutations of the indices of the available pieces."""
+        """Cria TAM_POP permutações aleatórias dos índices das peças."""
         n = len(self.recortes_disponiveis)
         base = list(range(n))
         for _ in range(self.TAM_POP):
@@ -67,32 +59,24 @@ class GeneticAlgorithm(LayoutDisplayMixin):
             self.POP.append(perm)
 
     # -------------------------------------------------------------------------
-    # 2. Decoding: Best-Fit Shelf Packing with Uniform Scaling
+    # 2. Decodificação com Shelf Packing Multi‑Chapa
     # -------------------------------------------------------------------------
-    def decode_shelf_layout(self, permutation: List[int]) -> List[Dict[str, Any]]:
+    def decode_shelf_layout(self, permutation: List[int]) -> Tuple[List[Dict[str, Any]], List[int]]:
         """
-        Decodes a permutation into a layout using a Best-Fit Shelf Packing strategy.
-        The algorithm:
-          - Starts with x_cursor = 0, y_cursor = 0, and shelf_height = 0.
-          - For each piece (in the order given by the permutation):
-              * For rectangular/diamond pieces, tests rotations 0° and 90° and chooses the first configuration that fits horizontally.
-              * If x_cursor + piece_width exceeds sheet_width, starts a new shelf (x_cursor = 0; y_cursor += shelf_height; shelf_height = 0).
-              * Places the piece at (x_cursor, y_cursor) and updates x_cursor and shelf_height.
-          - After all pieces are placed, the bounding box of the layout is computed.
-          - A uniform scaling factor is calculated to fit the entire layout within the sheet dimensions.
-          - All piece positions and dimensions are scaled accordingly.
-        This ensures that all pieces appear complete, with no overlapping or pieces cut off.
+        Decodifica uma permutação em um layout para UMA chapa usando Shelf Packing.
+        Retorna uma tupla (layout_result, leftover), onde:
+          - layout_result: lista de peças posicionadas na chapa atual (sem sobreposição ou cortes).
+          - leftover: lista de índices de peças que não couberam verticalmente.
         """
         layout_result = []
+        leftover = []
         x_cursor = 0
         y_cursor = 0
         shelf_height = 0
 
-        # Place all pieces in order, even if the layout exceeds the sheet
         for idx in permutation:
             rec_original = self.recortes_disponiveis[idx]
-
-            # Determine possible configurations: for retangular/diamante, try 0° and 90°; otherwise, only 0°
+            # Testa configurações possíveis: para retangular/diamante, testa 0° e 90°; para outros, só 0°
             possible_configs = []
             if rec_original["tipo"] in ("retangular", "diamante"):
                 for rot in [0, 90]:
@@ -105,64 +89,71 @@ class GeneticAlgorithm(LayoutDisplayMixin):
                 r_copy["rotacao"] = 0
                 w, h = self.get_dims(r_copy)
                 possible_configs.append((0, w, h))
-
-            # Choose the first configuration that fits horizontally
+            # Seleciona a primeira configuração que cabe horizontalmente
             best_config = None
             for (rot, w, h) in possible_configs:
                 if w <= self.sheet_width:
                     best_config = (rot, w, h)
                     break
             if best_config is None:
-                best_config = possible_configs[0]
+                leftover.append(idx)
+                continue
+
             rot, w, h = best_config
             r_final = copy.deepcopy(rec_original)
             r_final["rotacao"] = rot
 
-            # If the piece doesn't fit in the current shelf horizontally, start a new shelf
+            # Se não couber horizontalmente na shelf atual, inicia nova shelf
             if x_cursor + w > self.sheet_width:
                 x_cursor = 0
                 y_cursor += shelf_height
                 shelf_height = 0
 
-            # Place the piece at the current shelf position
+            # Se não couber verticalmente, adiciona aos leftovers
+            if y_cursor + h > self.sheet_height:
+                leftover.append(idx)
+                continue
+
+            # Posiciona a peça
             r_final["x"] = x_cursor
             r_final["y"] = y_cursor
             layout_result.append(r_final)
             x_cursor += w
             shelf_height = max(shelf_height, h)
 
-        # Compute the bounding box of the layout
-        x_min = min(rec["x"] for rec in layout_result)
-        y_min = min(rec["y"] for rec in layout_result)
-        x_max = max(rec["x"] + self.get_dims(rec)[0] for rec in layout_result)
-        y_max = max(rec["y"] + self.get_dims(rec)[1] for rec in layout_result)
-        layout_width = x_max - x_min
-        layout_height = y_max - y_min
+        return (layout_result, leftover)
 
-        # Calculate uniform scaling factor to fit the layout within the sheet
-        scale_x = self.sheet_width / layout_width if layout_width > 0 else 1
-        scale_y = self.sheet_height / layout_height if layout_height > 0 else 1
-        scale = min(scale_x, scale_y)
-
-        # Apply scaling to all pieces
-        for rec in layout_result:
-            rec["x"] = (rec["x"] - x_min) * scale
-            rec["y"] = (rec["y"] - y_min) * scale
-            if rec["tipo"] == "circular":
-                rec["r"] = rec["r"] * scale
-            elif rec["tipo"] in ("retangular", "diamante"):
-                dims = self.get_dims(rec)
-                # Update dimensions according to rotation
-                if rec.get("rotacao", 0) == 90:
-                    rec["altura"] = dims[0] * scale
-                    rec["largura"] = dims[1] * scale
-                else:
-                    rec["largura"] = dims[0] * scale
-                    rec["altura"] = dims[1] * scale
-        return layout_result
+    def decode_multisheet(self, permutation: List[int]) -> List[Dict[str, Any]]:
+        """
+        Decodifica uma permutação em um layout multi‑chapa.
+        Enquanto houver peças (índices) não colocadas, chama decode_shelf_layout e
+        empilha verticalmente cada chapa (com um gap de 10 unidades entre elas).
+        Retorna um layout único, com as peças de todas as chapas ajustadas verticalmente.
+        """
+        total_layout = []
+        current_perm = permutation[:]
+        offset = 0
+        gap = 10  # Espaço entre chapas
+        while current_perm:
+            layout, leftover = self.decode_shelf_layout(current_perm)
+            # Ajusta a coordenada y de cada peça nesta chapa
+            for rec in layout:
+                rec["y"] += offset
+            total_layout.extend(layout)
+            # Se nenhuma peça foi colocada nesta chapa, interrompe
+            if not layout:
+                break
+            # Calcula a altura utilizada nesta chapa
+            sheet_height_used = 0
+            for rec in layout:
+                _, y, w, h = self.get_layout_box_placed(rec)
+                sheet_height_used = max(sheet_height_used, y + h)
+            offset += sheet_height_used + gap
+            current_perm = leftover
+        return total_layout
 
     def get_dims(self, rec: Dict[str, Any]) -> Tuple[float, float]:
-        """Returns (w, h) for the piece, considering rotation (0° or 90°)."""
+        """Retorna (w, h) considerando a rotação (0° ou 90°)."""
         tipo = rec["tipo"]
         if tipo == "circular":
             d = 2 * rec["r"]
@@ -176,37 +167,41 @@ class GeneticAlgorithm(LayoutDisplayMixin):
             return rec.get("largura", 10), rec.get("altura", 10)
 
     def get_layout_box_placed(self, rec: Dict[str, Any]) -> Tuple[float, float, float, float]:
-        """Returns (x, y, w, h) of the placed piece for display."""
+        """Retorna (x, y, w, h) para a peça posicionada, considerando rotação."""
         x, y = rec["x"], rec["y"]
         w, h = self.get_dims(rec)
         return (x, y, w, h)
 
     # -------------------------------------------------------------------------
-    # 3. Evaluation (Fitness)
+    # 3. Avaliação (Fitness)
     # -------------------------------------------------------------------------
     def evaluate_individual(self, permutation: List[int]) -> float:
         """
-        Decodes the permutation into a layout via shelf packing and computes the fitness
-        as the area of the bounding box of the final layout. Lower area indicates better space utilization.
+        Decodifica a permutação usando multi‑chapa e retorna o fitness,
+        que é a área do bounding box que envolve todas as chapas.
+        Além disso, penaliza fortemente cada peça que não for alocada.
         """
-        layout = self.decode_shelf_layout(permutation)
-        if not layout:
-            return self.sheet_width * self.sheet_height * 2  # Penalize if layout is empty
-
+        layout, leftover = self.decode_shelf_layout(permutation)
+        multi_sheet_layout = self.decode_multisheet(permutation)
+        # Se alguma peça não foi colocada na primeira chapa, adiciona penalidade
+        penalty = 100000 * len(leftover)
+        if not multi_sheet_layout:
+            return self.sheet_width * self.sheet_height * 2
         x_min = float('inf')
         x_max = float('-inf')
         y_min = float('inf')
         y_max = float('-inf')
-        for rec in layout:
+        for rec in multi_sheet_layout:
             bx, by, bw, bh = self.get_layout_box_placed(rec)
             x_min = min(x_min, bx)
             x_max = max(x_max, bx + bw)
             y_min = min(y_min, by)
             y_max = max(y_max, by + bh)
         area_layout = (x_max - x_min) * (y_max - y_min)
-        return area_layout
+        return area_layout + penalty
 
     def evaluate_population(self):
+        """Avalia cada indivíduo e atualiza o melhor encontrado."""
         for perm in self.POP:
             fit = self.evaluate_individual(perm)
             if fit < self.best_fitness:
@@ -214,7 +209,7 @@ class GeneticAlgorithm(LayoutDisplayMixin):
                 self.best_individual = perm[:]
 
     # -------------------------------------------------------------------------
-    # 4. Genetic Operators (Permutation-based)
+    # 4. Operadores Genéticos (Permutações)
     # -------------------------------------------------------------------------
     def compute_fitness_scores(self) -> List[float]:
         fits = [self.evaluate_individual(perm) for perm in self.POP]
@@ -232,7 +227,7 @@ class GeneticAlgorithm(LayoutDisplayMixin):
         return self.POP[-1]
 
     def crossover_two_point(self, p1: List[int], p2: List[int]) -> List[int]:
-        """2-point order crossover for permutations."""
+        """Crossover de dois pontos para permutações."""
         size = len(p1)
         i1, i2 = sorted(random.sample(range(size), 2))
         child = [None] * size
@@ -247,7 +242,7 @@ class GeneticAlgorithm(LayoutDisplayMixin):
         return child
 
     def mutate(self, perm: List[int]) -> List[int]:
-        """Mutation: swap two positions in the permutation."""
+        """Mutação: troca de duas posições na permutação."""
         if random.random() < self.mutation_rate:
             i1, i2 = random.sample(range(len(perm)), 2)
             perm[i1], perm[i2] = perm[i2], perm[i1]
@@ -266,22 +261,23 @@ class GeneticAlgorithm(LayoutDisplayMixin):
         self.POP = new_pop[:self.TAM_POP]
 
     # -------------------------------------------------------------------------
-    # 5. Main Loop
+    # 5. Loop Principal
     # -------------------------------------------------------------------------
     def run(self):
         for gen in range(self.numero_geracoes):
             self.evaluate_population()
             self.genetic_operators()
             if gen % 10 == 0:
-                print(f"Generation {gen} - Best Fitness: {self.best_fitness}")
-        self.best_layout = self.decode_shelf_layout(self.best_individual)
+                print(f"Geração {gen} - Melhor Fitness: {self.best_fitness}")
+        # Decodifica a melhor permutação usando multi-sheet decode
+        self.best_layout = self.decode_multisheet(self.best_individual)
         self.optimized_layout = self.best_layout
         return self.best_layout
 
     def optimize_and_display(self):
         """
-        Displays the initial layout (user-provided positions) and the final optimized layout
-        (calculated via Best-Fit Shelf Packing and scaled to fit).
+        Exibe o layout inicial (posições originais fornecidas) e o layout final otimizado
+        (decodificado via multi‑chapa).
         """
         self.display_layout(self.recortes_disponiveis, title="Initial Layout - GA (Best-Fit Shelf)")
         self.run()
